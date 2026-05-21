@@ -1,0 +1,36 @@
+# Build stage
+FROM rust:1.70 as builder
+
+WORKDIR /build
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    cmake \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy manifest
+COPY Cargo.toml Cargo.lock ./
+
+# Build dependencies
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
+
+# Copy source
+COPY src ./src
+
+# Build application
+RUN cargo build --release
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/target/release/fusion-server /usr/local/bin/
+
+EXPOSE 50051
+
+CMD ["fusion-server"]
