@@ -1,0 +1,149 @@
+syntax = "proto3";
+
+package sentinel.fusion;
+
+import "google/protobuf/timestamp.pb2";
+import "google/protobuf/empty.pb2";
+
+// Sensor fusion service
+service FusionEngine {
+  rpc ListTracks(ListTracksRequest) returns (ListTracksResponse);
+  rpc GetTrack(GetTrackRequest) returns (Track);
+  rpc ListSwarms(ListSwarmsRequest) returns (ListSwarmsResponse);
+  rpc GetSwarm(GetSwarmRequest) returns (Swarm);
+  rpc GetStatus(google.protobuf.Empty) returns (FusionStatus);
+}
+
+// Track messages
+message ListTracksRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+  string swarm_id = 3;  // Optional filter
+}
+
+message ListTracksResponse {
+  repeated Track tracks = 1;
+  int32 total_count = 2;
+}
+
+message GetTrackRequest {
+  string track_id = 1;
+}
+
+message Track {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+
+  // Position (WGS84)
+  double latitude = 3;
+  double longitude = 4;
+  double altitude_m = 5;
+
+  // Velocity (NED frame)
+  message Velocity {
+    double north_mps = 1;
+    double east_mps = 2;
+    double down_mps = 3;
+  }
+  Velocity velocity = 6;
+
+  // Confidence
+  double confidence = 7;  // 0.0-1.0
+  repeated string sensor_ids = 8;  // Sources contributing to this track
+
+  // Classification
+  enum DroneType {
+    UNKNOWN = 0;
+    QUADCOPTER = 1;
+    FIXED_WING = 2;
+    LOITERING_MUNITION = 3;
+    HELICOPTER = 4;
+    SWARM_MEMBER = 5;
+  }
+  DroneType drone_type = 9;
+  double classification_confidence = 10;
+
+  // Swarm membership
+  string swarm_id = 11;
+
+  // Metadata
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  int32 age_seconds = 14;
+}
+
+// Swarm messages
+message ListSwarmsRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+}
+
+message ListSwarmsResponse {
+  repeated Swarm swarms = 1;
+  int32 total_count = 2;
+}
+
+message GetSwarmRequest {
+  string swarm_id = 1;
+}
+
+message Swarm {
+  string id = 1;
+  google.protobuf.Timestamp detected_at = 2;
+  google.protobuf.Timestamp updated_at = 3;
+
+  // Composition
+  repeated string track_ids = 4;
+  int32 drone_count = 5;
+
+  // Position
+  double centroid_latitude = 6;
+  double centroid_longitude = 7;
+  double centroid_altitude_m = 8;
+
+  // Formation
+  double formation_cohesion = 9;  // 0-1, how tight the formation
+  string formation_type = 10;     // "diamond", "circle", "line", "random"
+
+  // Behavior
+  enum SwarmBehavior {
+    UNKNOWN = 0;
+    STATIONARY = 1;
+    COORDINATED_MOVEMENT = 2;
+    CONVERGING = 3;
+    DISPERSING = 4;
+    EVASIVE = 5;
+    ATTACKING = 6;
+  }
+  SwarmBehavior behavior = 11;
+
+  // Velocity (NED)
+  message Velocity {
+    double north_mps = 1;
+    double east_mps = 2;
+    double down_mps = 3;
+  }
+  Velocity velocity = 12;
+
+  // Metadata
+  double confidence = 13;
+}
+
+// Status messages
+message FusionStatus {
+  bool is_healthy = 1;
+  google.protobuf.Timestamp started_at = 2;
+  int32 active_tracks = 3;
+  int32 active_swarms = 4;
+  int64 total_tracks_lifetime = 5;
+  int64 measurements_processed = 6;
+
+  message SensorHealth {
+    string sensor_id = 1;
+    bool is_operational = 2;
+    int64 last_measurement_ms_ago = 3;
+  }
+  repeated SensorHealth sensor_health = 7;
+
+  double average_latency_ms = 8;
+}

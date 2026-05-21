@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package sentinel.sensor;
+
+import "google/protobuf/timestamp.pb2";
+import "google/protobuf/empty.pb2";
+
+// Sensor data streaming service
+service SensorProvider {
+  rpc StreamSensorData(SensorStreamRequest) returns (stream SensorMeasurement);
+  rpc GetSensorStatus(google.protobuf.Empty) returns (SensorStatus);
+  rpc ConfigureSensor(SensorConfig) returns (google.protobuf.Empty);
+}
+
+// Sensor streaming request
+message SensorStreamRequest {
+  repeated string sensor_ids = 1;  // Which sensors to stream
+  bool include_raw_data = 2;       // Include raw measurements or just processed
+}
+
+// Raw sensor measurement from any source
+message SensorMeasurement {
+  string sensor_id = 1;                           // Unique sensor ID
+  google.protobuf.Timestamp timestamp = 2;        // When measurement was taken
+  string sensor_type = 3;                         // "radar", "rf", "camera", etc
+
+  oneof data {
+    RadarReturn radar = 4;
+    RFSignal rf = 5;
+    OpticalImagery optical = 6;
+    AcousticData acoustic = 7;
+    ThermalImagery thermal = 8;
+    ADSBReport adsb = 9;
+    LiDARScan lidar = 10;
+  }
+}
+
+// Radar return
+message RadarReturn {
+  double range_m = 1;              // Distance in meters
+  double azimuth_deg = 2;          // Bearing relative to north
+  double elevation_deg = 3;        // Altitude angle
+  double radial_velocity_mps = 4;  // Doppler velocity
+  double rcs_dbsm = 5;             // Radar cross-section
+  double signal_strength_db = 6;   // Signal power
+  int32 clutter_score = 7;         // 0-100, likelihood of clutter
+}
+
+// RF signal detection
+message RFSignal {
+  double frequency_hz = 1;         // Center frequency
+  double bandwidth_hz = 2;         // Signal bandwidth
+  double power_dbm = 3;            // Signal power
+  string modulation = 4;           // "FSK", "FHSS", "LTE", etc
+  double confidence = 5;           // 0-1, classification confidence
+  repeated bytes iq_samples = 6;   // Optional IQ data for ML
+}
+
+// Optical/EO imagery
+message OpticalImagery {
+  bytes image_data = 1;            // JPEG or PNG encoded
+  string resolution = 2;           // "720p", "1080p", "4k"
+  double focal_length_mm = 3;      // For geospatial calculation
+  double gsd_cm = 4;               // Ground sample distance
+}
+
+// Acoustic detection
+message AcousticData {
+  repeated double frequency_bins = 1;  // Power per frequency band
+  double peak_frequency_hz = 2;
+  double loudness_db = 3;
+  string sound_type = 4;           // "rotors", "jets", "unknown"
+}
+
+// Thermal imagery
+message ThermalImagery {
+  bytes image_data = 1;
+  double min_temp_c = 2;
+  double max_temp_c = 3;
+  double focal_length_mm = 4;
+}
+
+// ADS-B report (cooperative)
+message ADSBReport {
+  string callsign = 1;
+  string aircraft_type = 2;
+  string icao_address = 3;
+  double latitude = 4;
+  double longitude = 5;
+  double altitude_m = 6;
+  double ground_speed_knots = 7;
+  double track_deg = 8;
+  double vertical_rate_fpm = 9;
+}
+
+// LiDAR scan
+message LiDARScan {
+  repeated Point3D points = 1;
+  double max_range_m = 2;
+  string scanner_type = 3;
+}
+
+message Point3D {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double intensity = 4;
+}
+
+// Sensor status
+message SensorStatus {
+  string sensor_id = 1;
+  bool is_operational = 2;
+  google.protobuf.Timestamp last_measurement = 3;
+  int64 measurements_total = 4;
+  int64 measurements_per_sec = 5;
+  double health_percentage = 6;  // 0-100
+  string last_error = 7;         // If not operational
+}
+
+// Sensor configuration
+message SensorConfig {
+  string sensor_id = 1;
+  string sensor_type = 2;
+
+  // Sensor-specific config
+  oneof config {
+    RadarConfig radar = 3;
+    RFConfig rf = 4;
+    OpticalConfig optical = 5;
+  }
+}
+
+message RadarConfig {
+  double azimuth_resolution_deg = 1;
+  double range_resolution_m = 2;
+  double pulse_repetition_freq_hz = 3;
+  string mode = 4;  // "doppler", "surveillance", "search"
+}
+
+message RFConfig {
+  double frequency_min_hz = 1;
+  double frequency_max_hz = 2;
+  double sample_rate_hz = 3;
+  int32 dwell_time_ms = 4;
+}
+
+message OpticalConfig {
+  int32 resolution_width = 1;
+  int32 resolution_height = 2;
+  double frame_rate_fps = 3;
+  string focus_mode = 4;  // "auto", "manual", "passive"
+}

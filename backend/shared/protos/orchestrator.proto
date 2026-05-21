@@ -1,0 +1,183 @@
+syntax = "proto3";
+
+package sentinel.orchestrator;
+
+import "google/protobuf/timestamp.pb2";
+import "google/protobuf/empty.pb2";
+
+// Defense orchestration service
+service Orchestrator {
+  rpc ProposalEngagement(ProposalRequest) returns (EngagementPlan);
+  rpc AssignInterceptor(InterceptorAssignmentRequest) returns (EngagementPlan);
+  rpc AbortEngagement(AbortRequest) returns (google.protobuf.Empty);
+  rpc GetEngagementStatus(GetEngagementRequest) returns (EngagementPlan);
+  rpc ListEngagements(ListEngagementsRequest) returns (ListEngagementsResponse);
+  rpc UpdateROE(UpdateROERequest) returns (ROE);
+}
+
+// Threat data
+message Threat {
+  string id = 1;
+  google.protobuf.Timestamp detected_at = 2;
+  repeated string track_ids = 3;
+
+  enum DroneType {
+    UNKNOWN = 0;
+    QUADCOPTER = 1;
+    FIXED_WING = 2;
+    LOITERING_MUNITION = 3;
+  }
+  DroneType drone_type = 4;
+  double classification_confidence = 5;
+
+  enum AttackVector {
+    UNKNOWN = 0;
+    DIRECT_STRIKE = 1;
+    SWARM_ATTACK = 2;
+    COORDINATED_ASSAULT = 3;
+    EVASIVE_APPROACH = 4;
+  }
+  AttackVector predicted_vector = 6;
+  double attack_probability = 7;  // 0-1
+
+  google.protobuf.Duration time_to_impact = 8;
+
+  enum ThreatStatus {
+    DETECTED = 0;
+    TRACKED = 1;
+    TARGETED = 2;
+    ENGAGED = 3;
+    NEUTRALIZED = 4;
+    LOST = 5;
+  }
+  ThreatStatus status = 9;
+
+  double priority_score = 10;  // Computed ranking
+}
+
+// Engagement planning request
+message ProposalRequest {
+  string threat_id = 1;
+}
+
+// Interceptor assignment
+message InterceptorAssignmentRequest {
+  string threat_id = 1;
+  string interceptor_id = 2;
+}
+
+// Engagement plan
+message EngagementPlan {
+  string id = 1;
+  string threat_id = 2;
+  google.protobuf.Timestamp proposed_at = 3;
+  google.protobuf.Timestamp approved_at = 4;
+  google.protobuf.Timestamp executed_at = 5;
+
+  repeated InterceptorAssignment assignments = 6;
+  double success_probability = 7;
+  double collateral_damage_estimate = 8;  // 0-1
+  int32 cost = 9;  // Resource cost
+
+  enum EngagementStatus {
+    PROPOSED = 0;
+    APPROVED = 1;
+    EXECUTING = 2;
+    COMPLETED = 3;
+    FAILED = 4;
+    ABORTED = 5;
+  }
+  EngagementStatus status = 10;
+
+  string approved_by = 11;  // Operator ID
+  string approval_role = 12;  // "commander", "operator"
+}
+
+// Interceptor assignment details
+message InterceptorAssignment {
+  string interceptor_id = 1;
+  string interceptor_name = 2;
+  double intercept_probability = 3;  // 0-1
+  int32 engagements_queued = 4;
+  int32 cooldown_remaining_ms = 5;
+  enum AssignmentStatus {
+    PROPOSED = 0;
+    ASSIGNED = 1;
+    IN_FLIGHT = 2;
+    INTERCEPTED = 3;
+    MISSED = 4;
+    ABORTED = 5;
+  }
+  AssignmentStatus status = 6;
+}
+
+// Engagement abort
+message AbortRequest {
+  string engagement_id = 1;
+  string reason = 2;
+  string operator_id = 3;
+}
+
+// Get engagement status
+message GetEngagementRequest {
+  string engagement_id = 1;
+}
+
+// List engagements
+message ListEngagementsRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+  enum StatusFilter {
+    ALL = 0;
+    ACTIVE = 1;
+    COMPLETED = 2;
+    FAILED = 3;
+  }
+  StatusFilter status = 3;
+}
+
+message ListEngagementsResponse {
+  repeated EngagementPlan engagements = 1;
+  int32 total_count = 2;
+}
+
+// Rules of Engagement
+message ROE {
+  google.protobuf.Timestamp updated_at = 1;
+  string updated_by = 2;
+
+  // Engagement constraints
+  int32 min_confidence_percent = 3;  // Min classification confidence
+  int32 max_civilians_nearby = 4;    // Within 500m radius
+  double max_collateral_damage = 5;  // Estimated damage tolerance
+  bool require_human_approval = 6;   // Always require operator approval
+  int32 approval_timeout_seconds = 7;
+
+  // Engagement prioritization
+  enum PriorityScheme {
+    THREAT_LEVEL = 0;
+    SPEED = 1;
+    TIME_TO_IMPACT = 2;
+    COORDINATED_SWARM = 3;
+  }
+  PriorityScheme priority = 8;
+
+  // Defense layer preferences
+  repeated DefenseLayerPreference preferences = 9;
+}
+
+// Defense layer preference
+message DefenseLayerPreference {
+  string defense_layer_id = 1;  // e.g., "jamming_unit_1"
+  string defense_type = 2;      // e.g., "rf_disruption"
+  int32 priority = 3;           // 1=highest
+  bool enabled = 4;
+  int32 cost_per_use = 5;
+}
+
+// Update ROE request
+message UpdateROERequest {
+  ROE new_roe = 1;
+  string updated_by = 2;
+  string reason = 3;
+}

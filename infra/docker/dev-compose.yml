@@ -1,0 +1,276 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with TimescaleDB
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: sentinel-postgres
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel_dev_password
+      POSTGRES_DB: sentinel
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: sentinel-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-network
+
+  # Apache Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: sentinel-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - sentinel-network
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: sentinel-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LOG_RETENTION_HOURS: 168
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-network
+
+  # Kafka topics initialization
+  kafka-init:
+    image: confluentinc/cp-kafka:latest
+    container_name: sentinel-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+    command: |
+      bash -c '
+        kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --topic tracks.new --partitions 3 --replication-factor 1
+        kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --topic tracks.updated --partitions 3 --replication-factor 1
+        kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --topic swarms.detected --partitions 2 --replication-factor 1
+        kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --topic threats.detected --partitions 2 --replication-factor 1
+        kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --topic threats.updated --partitions 2 --replication-factor 1
+        kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --topic engagements.proposed --partitions 2 --replication-factor 1
+        kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --topic engagements.executed --partitions 2 --replication-factor 1
+        kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --topic audit.engagement --partitions 1 --replication-factor 1
+        echo "All topics created!"
+      '
+    networks:
+      - sentinel-network
+
+  # Mock sensor data generator
+  sensor-simulator:
+    build:
+      context: ../../backend/
+      dockerfile: ../docker/Dockerfile.sensor-sim
+    container_name: sentinel-sensor-sim
+    environment:
+      FUSION_HOST: fusion-engine
+      FUSION_PORT: 50051
+      SIM_SPEED: 1.0
+    depends_on:
+      - fusion-engine
+    networks:
+      - sentinel-network
+    restart: unless-stopped
+
+  # Rust fusion engine
+  fusion-engine:
+    build:
+      context: ../../backend/fusion-engine
+      dockerfile: ../../infra/docker/Dockerfile.fusion-engine
+    container_name: sentinel-fusion-engine
+    environment:
+      POSTGRES_URL: postgresql://sentinel:sentinel_dev_password@postgres:5432/sentinel
+      KAFKA_BROKERS: kafka:9092
+      RUST_LOG: debug
+    ports:
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - sentinel-network
+    restart: unless-stopped
+
+  # Python AI services
+  ai-services:
+    build:
+      context: ../../backend/ai-services
+      dockerfile: ../../infra/docker/Dockerfile.ai-services
+    container_name: sentinel-ai-services
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "8000:8000"
+    depends_on:
+      - kafka
+    networks:
+      - sentinel-network
+    restart: unless-stopped
+
+  # Go orchestrator
+  orchestrator:
+    build:
+      context: ../../backend/orchestrator
+      dockerfile: ../../infra/docker/Dockerfile.orchestrator
+    container_name: sentinel-orchestrator
+    environment:
+      POSTGRES_URL: postgresql://sentinel:sentinel_dev_password@postgres:5432/sentinel
+      KAFKA_BROKERS: kafka:9092
+      ETCD_ENDPOINTS: etcd:2379
+    ports:
+      - "50052:50052"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+    networks:
+      - sentinel-network
+    restart: unless-stopped
+
+  # etcd for distributed consensus
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: sentinel-etcd
+    environment:
+      ETCD_NAME: etcd0
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
+      ETCD_INITIAL_CLUSTER: etcd0=http://etcd:2380
+      ETCD_INITIAL_CLUSTER_STATE: new
+    ports:
+      - "2379:2379"
+    volumes:
+      - etcd_data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-network
+
+  # Go API gateway
+  api-gateway:
+    build:
+      context: ../../backend/api-gateway
+      dockerfile: ../../infra/docker/Dockerfile.api-gateway
+    container_name: sentinel-api-gateway
+    environment:
+      FUSION_ENDPOINT: fusion-engine:50051
+      ORCHESTRATOR_ENDPOINT: orchestrator:50052
+      POSTGRES_URL: postgresql://sentinel:sentinel_dev_password@postgres:5432/sentinel
+      KAFKA_BROKERS: kafka:9092
+    ports:
+      - "4000:4000"
+    depends_on:
+      - fusion-engine
+      - orchestrator
+      - postgres
+    networks:
+      - sentinel-network
+    restart: unless-stopped
+
+  # Next.js command center (development mode)
+  command-center:
+    build:
+      context: ../../frontend/apps/command-center
+      dockerfile: ../../../infra/docker/Dockerfile.command-center
+    container_name: sentinel-command-center
+    environment:
+      NEXT_PUBLIC_GRAPHQL_URL: http://localhost:4000/graphql
+      NEXT_PUBLIC_WEBSOCKET_URL: ws://localhost:4000/graphql
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - sentinel-network
+    restart: unless-stopped
+
+  # Optional: Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sentinel-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - sentinel-network
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sentinel-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - sentinel-network
+
+networks:
+  sentinel-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  etcd_data:
+  prometheus_data:
+  grafana_data:
