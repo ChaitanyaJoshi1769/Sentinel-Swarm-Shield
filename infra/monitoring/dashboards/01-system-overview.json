@@ -1,0 +1,40 @@
+{
+  "dashboard": {
+    "title": "System Overview",
+    "tags": ["sentinel", "production"],
+    "timezone": "browser",
+    "schemaVersion": 36,
+    "version": 0,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Status",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+        "targets": [{"expr": "up{job=~\"fusion-engine|orchestrator|defense-executor|api-gateway\"}", "refId": "A"}]
+      },
+      {
+        "id": 2,
+        "title": "End-to-End Latency (p99)",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+        "targets": [{"expr": "histogram_quantile(0.99, sensor_to_decision_latency_ms)", "refId": "A"}]
+      },
+      {
+        "id": 3,
+        "title": "Throughput (tracks/sec)",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+        "targets": [{"expr": "rate(tracks_processed_total[5m])", "refId": "A"}]
+      },
+      {
+        "id": 4,
+        "title": "Error Rate (%)",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+        "targets": [{"expr": "rate(http_requests_total{status=~\"5..\"}[5m]) * 100", "refId": "A"}]
+      }
+    ]
+  }
+}
